@@ -1,111 +1,156 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import styled from '@emotion/styled';
-import * as tf from '@tensorflow/tfjs';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
+import { SEGMENT_CONSTANTS } from '../const/segment';
+import { COLORS } from '../const/colors';
+
+
 
 export function Video() {
   const [error, setError] = useState<string | null>(null);
+  const [isWebcamEnabled, setIsWebcamEnabled] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
+  const segmenterRef = useRef<ImageSegmenter | null>(null);
+  const lastVideoTimeRef = useRef<number>(-1);
+  const animationFrameRef = useRef<number | undefined>(undefined);
 
-  useEffect(() => {
-    const initializeTensorFlow = async () => {
-      try {
-        await tf.setBackend('webgl');
-        const loadedModel = await cocoSsd.load();
-        setModel(loadedModel);
-      } catch (err) {
-        console.error('모델 로딩 실패:', err);
-        setError('인식 모델을 불러오는데 실패했습니다.');
-      }
-    };
-
-    initializeTensorFlow();
-  }, []);
-
-  useEffect(() => {
-    const startCamera = async () => {
-      try {
-        const constraints = {
-          video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            facingMode: 'user'
-          }
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.';
-        setError('카메라 접근에 실패했습니다. 카메라 권한을 확인해주세요.');
-        console.error('카메라 오류:', errorMessage);
-      }
-    };
-
-    startCamera();
-
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    let animationFrameId: number;
-
-    const processFrame = async () => {
-      if (!videoRef.current || !canvasRef.current || !model) return;
-
-      const canvasContext = canvasRef.current.getContext('2d');
-      if (!canvasContext) return;
-
-      // 캔버스 크기를 비디오와 동일하게 설정
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-
-      // 비디오 프레임을 캔버스에 그리기
-      canvasContext.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
-
-      // 사람 인식 실행
-      const predictions = await model.detect(videoRef.current);
-
-      // 사람이 인식된 영역에 빨간색 윤곽선 그리기
-      predictions.forEach(prediction => {
-        if (prediction.class === 'person') {
-          const [x, y, width, height] = prediction.bbox;
-          
-          // 윤곽선 스타일 설정
-          canvasContext.strokeStyle = 'red';
-          canvasContext.lineWidth = 10;
-          
-          // 사각형 윤곽선 그리기
-          canvasContext.strokeRect(x, y, width, height);
-        }
+  const initializeSegmenter = useCallback(async () => {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(SEGMENT_CONSTANTS.visionTaskPath);
+      const segmenter = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: SEGMENT_CONSTANTS.modelAssetPath,
+          delegate: 'GPU'
+        },
+        outputCategoryMask: true,
+        outputConfidenceMasks: false,
+        runningMode: SEGMENT_CONSTANTS.runningMode
       });
 
-      animationFrameId = requestAnimationFrame(processFrame);
-    };
+      segmenterRef.current = segmenter;
+    } catch (err) {
+      console.error('세그멘터 초기화 실패:', err);
+      setError('인식 모델을 불러오는데 실패했습니다.');
+    }
+  }, []);
 
-    if (videoRef.current && model) {
+  const startCamera = useCallback(async () => {
+    try {
+      const constraints = {
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user'
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.';
+      setError('카메라 접근에 실패했습니다. 카메라 권한을 확인해주세요.');
+      console.error('카메라 오류:', errorMessage);
+    }
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = undefined;
+    }
+  }, []);
+
+  const toggleWebcam = useCallback(async () => {
+    if (!segmenterRef.current) return;
+
+    if (isWebcamEnabled) {
+      setIsWebcamEnabled(false);
+      stopCamera();
+    } else {
+      setIsWebcamEnabled(true);
+      await startCamera();
+    }
+  }, [isWebcamEnabled, startCamera, stopCamera]);
+
+  const processFrame = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current || !segmenterRef.current || !isWebcamEnabled) return;
+
+    const currentTime = videoRef.current.currentTime;
+    if (currentTime === lastVideoTimeRef.current) {
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+      return;
+    }
+    lastVideoTimeRef.current = currentTime;
+
+    const canvasContext = canvasRef.current.getContext('2d');
+    if (!canvasContext) return;
+
+    // 캔버스 크기를 비디오와 동일하게 설정
+    canvasRef.current.width = videoRef.current.videoWidth;
+    canvasRef.current.height = videoRef.current.videoHeight;
+
+    // 비디오 프레임을 캔버스에 그리기
+    canvasContext.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+
+    const startTimeMs = performance.now();
+
+    try {
+      // 이미지 세그멘테이션 실행
+      await segmenterRef.current.segmentForVideo(videoRef.current, startTimeMs, (results) => {
+        if (results.categoryMask && canvasRef.current) {
+          const imageData = canvasContext.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+          const mask = results.categoryMask.getAsFloat32Array();
+
+          for (let i = 0; i < mask.length; ++i) {
+            const maskVal = Math.round(mask[i] * 255.0);
+            const legendColor = COLORS[maskVal % COLORS.length];
+            const j = i * 4;
+            imageData.data[j] = (legendColor[0] + imageData.data[j]) / 2;
+            imageData.data[j + 1] = (legendColor[1] + imageData.data[j + 1]) / 2;
+            imageData.data[j + 2] = (legendColor[2] + imageData.data[j + 2]) / 2;
+            imageData.data[j + 3] = (legendColor[3] + imageData.data[j + 3]) / 2;
+          }
+
+          canvasContext.putImageData(imageData, 0, 0);
+        }
+      });
+    } catch (err) {
+      console.error('프레임 처리 중 오류:', err);
+    }
+
+    if (isWebcamEnabled) {
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+    }
+  }, [isWebcamEnabled]);
+
+  useEffect(() => {
+    initializeSegmenter();
+  }, [initializeSegmenter]);
+
+  useEffect(() => {
+    if (videoRef.current && segmenterRef.current && isWebcamEnabled) {
       videoRef.current.onloadedmetadata = () => {
         processFrame();
       };
     }
 
     return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
+      stopCamera();
     };
-  }, [model]);
+  }, [isWebcamEnabled, processFrame, stopCamera]);
 
   return (
     <VideoContainer>
@@ -115,6 +160,9 @@ export function Video() {
         <VideoWrapper>
           <StyledVideo ref={videoRef} autoPlay playsInline />
           <StyledCanvas ref={canvasRef} />
+          <WebcamButton onClick={toggleWebcam}>
+            {isWebcamEnabled ? 'DISABLE SEGMENTATION' : 'ENABLE SEGMENTATION'}
+          </WebcamButton>
         </VideoWrapper>
       )}
     </VideoContainer>
@@ -166,4 +214,23 @@ const ErrorMessage = styled.div`
   border-radius: 8px;
   color: white;
   text-align: center;
-`; 
+`;
+
+const WebcamButton = styled.button`
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  z-index: 1000;
+
+  &:hover {
+    background-color: #0056b3;
+  }
+`;
