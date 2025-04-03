@@ -2,9 +2,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import styled from '@emotion/styled';
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 import { SEGMENT_CONSTANTS } from '../const/segment';
-import { COLORS } from '../const/colors';
-
-
+import { getAsciiChar, calculateDistance, getNearestPersonPixel } from '../utils/asciiUtils';
 
 export function Video() {
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +38,8 @@ export function Video() {
     try {
       const constraints = {
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
           facingMode: 'user'
         }
       };
@@ -99,41 +97,44 @@ export function Video() {
     canvasRef.current.width = videoRef.current.videoWidth;
     canvasRef.current.height = videoRef.current.videoHeight;
 
-    // 비디오 프레임을 캔버스에 그리기
-    canvasContext.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+    // 캔버스를 검은색으로 초기화
+    canvasContext.fillStyle = 'black';
+    canvasContext.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     const startTimeMs = performance.now();
 
     try {
-      // 이미지 세그멘테이션 실행
       await segmenterRef.current.segmentForVideo(videoRef.current, startTimeMs, (results) => {
         if (results.categoryMask && canvasRef.current) {
-          const imageData = canvasContext.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
           const mask = results.categoryMask.getAsFloat32Array();
+          const personCenter = getNearestPersonPixel(mask, canvasRef.current.width, canvasRef.current.height);
 
-          for (let i = 0; i < mask.length; ++i) {
-            const maskVal = Math.round(mask[i] * 255.0);
-            const j = i * 4;
-            
-            if (maskVal === 0) { // 배경인 경우
-              imageData.data[j] = 0;       // R
-              imageData.data[j + 1] = 0;   // G
-              imageData.data[j + 2] = 0;   // B
-              imageData.data[j + 3] = 255;   // A (투명)
-            } else { // 객체인 경우
-              imageData.data[j] = 255;       // R
-              imageData.data[j + 1] = 255;   // G
-              imageData.data[j + 2] = 255;   // B
-              imageData.data[j + 3] = 255; // A
+          if (personCenter) {
+            const maxDistance = Math.max(
+              Math.max(personCenter.x, canvasRef.current.width - personCenter.x),
+              Math.max(personCenter.y, canvasRef.current.height - personCenter.y)
+            );
+
+            // 아스키아트 그리기
+            canvasContext.fillStyle = 'white';
+            canvasContext.font = '9px monospace';
+            canvasContext.textAlign = 'center';
+            canvasContext.textBaseline = 'middle';
+
+            const gridSize = 9; // 그리드 크기 줄임
+            for (let y = 0; y < canvasRef.current.height; y += gridSize) {
+              for (let x = 0; x < canvasRef.current.width; x += gridSize) {
+                const index = y * canvasRef.current.width + x;
+                const maskVal = Math.round(mask[index] * 255.0);
+                const distance = calculateDistance(x, y, personCenter.x, personCenter.y);
+                const normalizedDistance = distance / maxDistance;
+                const asciiChar = getAsciiChar(normalizedDistance, maskVal);
+                
+                canvasContext.fillStyle = 'white';
+                canvasContext.fillText(asciiChar, x + gridSize/2, y + gridSize/2);
+              }
             }
           }
-
-          // 전체 화면을 검은색으로 채우기
-          canvasContext.fillStyle = 'black';
-          canvasContext.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          
-          // 세그멘테이션 결과 그리기
-          canvasContext.putImageData(imageData, 0, 0);
         }
       });
     } catch (err) {
@@ -173,7 +174,7 @@ export function Video() {
           <StyledVideo ref={videoRef} autoPlay playsInline />
           <StyledCanvas ref={canvasRef} />
           <WebcamButton onClick={toggleWebcam}>
-            {isWebcamEnabled ? 'DISABLE SEGMENTATION' : 'ENABLE SEGMENTATION'}
+            {isWebcamEnabled ? '다른 팀 선택하기' : '팀 선택하기'}
           </WebcamButton>
         </VideoWrapper>
       )}
@@ -200,7 +201,6 @@ const StyledVideo = styled.video`
   width: 100vw;
   height: 100vh;
   object-fit: cover;
-  transform: scaleX(-1);
   display: block;
 `;
 
@@ -211,7 +211,6 @@ const StyledCanvas = styled.canvas`
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1);
 `;
 
 const ErrorMessage = styled.div`
@@ -230,14 +229,14 @@ const ErrorMessage = styled.div`
 
 const WebcamButton = styled.button`
   position: fixed;
-  bottom: 20px;
+  bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
   padding: 12px 24px;
-  background-color: #007bff;
-  color: white;
+  background-color: #fff;
+  color: black;
   border: none;
-  border-radius: 4px;
+  border-radius: 24px;
   cursor: pointer;
   font-size: 16px;
   z-index: 1000;
