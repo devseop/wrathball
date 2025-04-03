@@ -113,14 +113,26 @@ export function Video() {
 
           for (let i = 0; i < mask.length; ++i) {
             const maskVal = Math.round(mask[i] * 255.0);
-            const legendColor = COLORS[maskVal % COLORS.length];
             const j = i * 4;
-            imageData.data[j] = (legendColor[0] + imageData.data[j]) / 2;
-            imageData.data[j + 1] = (legendColor[1] + imageData.data[j + 1]) / 2;
-            imageData.data[j + 2] = (legendColor[2] + imageData.data[j + 2]) / 2;
-            imageData.data[j + 3] = (legendColor[3] + imageData.data[j + 3]) / 2;
+            
+            if (maskVal === 0) { // 배경인 경우
+              imageData.data[j] = 0;       // R
+              imageData.data[j + 1] = 0;   // G
+              imageData.data[j + 2] = 0;   // B
+              imageData.data[j + 3] = 255;   // A (투명)
+            } else { // 객체인 경우
+              imageData.data[j] = 255;       // R
+              imageData.data[j + 1] = 255;   // G
+              imageData.data[j + 2] = 255;   // B
+              imageData.data[j + 3] = 255; // A
+            }
           }
 
+          // 전체 화면을 검은색으로 채우기
+          canvasContext.fillStyle = 'black';
+          canvasContext.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          
+          // 세그멘테이션 결과 그리기
           canvasContext.putImageData(imageData, 0, 0);
         }
       });
