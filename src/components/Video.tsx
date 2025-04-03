@@ -2,10 +2,11 @@ import React, { useRef, useEffect } from 'react';
 import styled from '@emotion/styled';
 import { useWebcam } from '../hooks/useWebcam';
 import { useSegmentation } from '../hooks/useSegmentation';
+import { TeamSelector } from './TeamSelector';
 
 export function Video() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { videoRef, isWebcamEnabled, error, toggleWebcam } = useWebcam();
+  const { videoRef, isWebcamEnabled, error, selectedTeam, handleTeamSelect, handleTeamDeselect } = useWebcam();
   const { initializeSegmenter, processFrame, animationFrameRef } = useSegmentation(videoRef, canvasRef);
 
   useEffect(() => {
@@ -34,9 +35,11 @@ export function Video() {
         <VideoWrapper>
           <StyledVideo ref={videoRef} autoPlay playsInline />
           <StyledCanvas ref={canvasRef} />
-          <WebcamButton onClick={toggleWebcam}>
-            {isWebcamEnabled ? '다른 팀 선택하기' : '팀 선택하기'}
-          </WebcamButton>
+          <TeamSelector
+            selectedTeam={selectedTeam}
+            onTeamSelect={handleTeamSelect}
+            onTeamDeselect={handleTeamDeselect}
+          />
         </VideoWrapper>
       )}
     </VideoContainer>
@@ -86,23 +89,4 @@ const ErrorMessage = styled.div`
   border-radius: 8px;
   color: white;
   text-align: center;
-`;
-
-const WebcamButton = styled.button`
-  position: fixed;
-  bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 12px 24px;
-  background-color: #fff;
-  color: black;
-  border: none;
-  border-radius: 24px;
-  cursor: pointer;
-  font-size: 16px;
-  z-index: 1000;
-
-  &:hover {
-    background-color: #0056b3;
-  }
 `;

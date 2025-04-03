@@ -1,8 +1,10 @@
 import { useRef, useState, useCallback } from 'react';
+import { Team } from '../const/team';
 
 export const useWebcam = () => {
   const [isWebcamEnabled, setIsWebcamEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -36,20 +38,28 @@ export const useWebcam = () => {
     }
   }, []);
 
-  const toggleWebcam = useCallback(async () => {
-    if (isWebcamEnabled) {
-      setIsWebcamEnabled(false);
-      stopCamera();
-    } else {
+  const handleTeamSelect = useCallback(async (team: Team) => {
+    setSelectedTeam(team);
+    if (!isWebcamEnabled) {
       setIsWebcamEnabled(true);
       await startCamera();
     }
-  }, [isWebcamEnabled, startCamera, stopCamera]);
+  }, [isWebcamEnabled, startCamera]);
+
+  const handleTeamDeselect = useCallback(() => {
+    setSelectedTeam(null);
+    if (isWebcamEnabled) {
+      setIsWebcamEnabled(false);
+      stopCamera();
+    }
+  }, [isWebcamEnabled, stopCamera]);
 
   return {
     videoRef,
     isWebcamEnabled,
     error,
-    toggleWebcam
+    selectedTeam,
+    handleTeamSelect,
+    handleTeamDeselect
   };
 }; 
